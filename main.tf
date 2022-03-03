@@ -14,6 +14,26 @@ data "aws_ami" "ubuntu" {
 }
 
 data "aws_region" current {}
+data "aws_vpc" "default" {
+  default = true
+}
+
+resource "random_id" "unique_sg_id" {
+  byte_length = 3
+}
+
+
+data "aws_vpc" "VPCtoBeUsed" {
+  id = var.user_vpc_id != "" ? var.user_vpc_id : data.aws_vpc.default.id 
+}
+
+data "aws_subnet_ids" "FetchingSubnetIDs" {
+  vpc_id = data.aws_vpc.VPCtoBeUsed.id
+}
+data "aws_subnet" "example" {
+ for_each = data.aws_subnet_ids.FetchingSubnetIDs.ids
+ id  = each.value
+}
 
 resource "aws_instance" "NACScheduler" {
   ami = data.aws_ami.ubuntu.id
@@ -22,18 +42,18 @@ resource "aws_instance" "NACScheduler" {
   key_name = "${var.aws_key}"
   associate_public_ip_address = true
   source_dest_check = false
-
+  subnet_id   = element(tolist(data.aws_subnet_ids.FetchingSubnetIDs.ids),0) 
   root_block_device {
     volume_size = var.volume_size
   }
-  # ebs_block_device {
-  #   device_name = "/dev/sdb"
-  #   volume_type = "gp2"
-  #   volume_size = 101
-  # }
-
+  vpc_security_group_ids = [ aws_security_group.nasunilabsSecurityGroup.id ]
   tags = {
-    Name = var.nac_scheduler_name
+    Name            = var.nac_scheduler_name
+    Application     = "Nasuni Analytics Connector with Elasticsearch"
+    Developer       = "Nasuni"
+    PublicationType = "Nasuni Labs"
+    Version         = "V 0.1"
+
   }
 
 depends_on = [
@@ -42,6 +62,54 @@ depends_on = [
 ]
 }
 
+resource "aws_security_group" "nasunilabsSecurityGroup" {
+  name        = "nasuni-labs-ES-Strikers-SG-${random_id.unique_sg_id.dec}"
+  description = "Allow adinistrators to access HTTP and SSH service in instance"
+  vpc_id      = data.aws_vpc.VPCtoBeUsed.id
+
+
+ # count = min(length(var.ingress_ports))
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
+  }
+
+    ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
+  }
+
+      ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
+  }
+  ingress {
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
+  }
+  egress {
+    from_port       = 0
+    to_port         = 0
+    protocol        = "-1"
+    cidr_blocks     = ["0.0.0.0/0"]
+  }
+   tags = {
+    Name            = "SecurityGroup for Instance : ${var.nac_scheduler_name}"
+    Application     = "Nasuni Analytics Connector with Elasticsearch"
+    Developer       = "Nasuni"
+    PublicationType = "Nasuni Labs"
+    Version         = "V 0.1"
+
+  }
+}
 
 resource "null_resource" "update_secGrp" {
   provisioner "local-exec" {
@@ -50,35 +118,33 @@ resource "null_resource" "update_secGrp" {
   depends_on = [aws_instance.NACScheduler]
 }
 
+
+
 resource "null_resource" "NACScheduler_IP" {
   provisioner "local-exec" {
     command = "echo ${aws_instance.NACScheduler.public_ip} > NACScheduler_IP.txt"
-  }
-  provisioner "local-exec" {
-    when    = destroy
-    command = "rm -rf NACScheduler_IP.txt"
   }
   depends_on = [aws_instance.NACScheduler]
 }
 
 resource "null_resource" "aws_conf" {
   provisioner "local-exec" {
-     command = "aws configure get aws_access_key_id --profile ${var.aws_profile} | xargs > Xaws_access_key.txt && aws configure get aws_secret_access_key --profile ${var.aws_profile} | xargs > Xaws_secret_key.txt"
+     command = "aws configure get aws_access_key_id --profile ${var.aws_profile} | xargs > awacck.txt && aws configure get aws_secret_access_key --profile ${var.aws_profile} | xargs > awsecck.txt"
   }
   provisioner "local-exec" {
     when    = destroy
-    command = "rm -rf X*key.txt"
+    command = "rm -rf *cck.txt"
   }
 }
 
 data "local_file" "aws_conf_access_key" {
-  filename   = "${path.cwd}/Xaws_access_key.txt"
+  filename   = "${path.cwd}/awacck.txt"
   depends_on = [null_resource.aws_conf]
 }
 
 
 data "local_file" "aws_conf_secret_key" {
-  filename   = "${path.cwd}/Xaws_secret_key.txt"
+  filename   = "${path.cwd}/awsecck.txt"
   depends_on = [null_resource.aws_conf]
 }
 
@@ -110,7 +176,6 @@ data "local_file" "aws_conf_secret_key" {
       "aws configure --profile ${var.aws_profile} set aws_secret_access_key ${data.local_file.aws_conf_secret_key.content}",
       "aws configure set region ${data.aws_region.current.name} --profile ${var.aws_profile}",
       "sudo apt update",
-      "ls",
       "echo '@@@@@@@@@@@@@@@@@@@@@ FINISHED - Inastall Packages @@@@@@@@@@@@@@@@@@@@@@@'"
       ]
   }
@@ -133,13 +198,16 @@ resource "null_resource" "Inatall_APACHE" {
       "sudo ufw app list",
       "sudo ufw allow 'Apache'",
       "sudo service apache2 restart",
-      "sudo systemctl apache2 staus",
       "echo '@@@@@@@@@@@@@@@@@@@@@ FINISHED - Inastall WEB Server             @@@@@@@@@@@@@@@@@@@@@@@'",
       "echo '@@@@@@@@@@@@@@@@@@@@@ STARTED  - Deployment of SearchUI Web Site @@@@@@@@@@@@@@@@@@@@@@@'",
-      "git clone https://github.com/nasuni-labs/nasuni-opensearch-userinterface.git",
-      "cd nasuni-opensearch-userinterface/SearchUI_Web",
+      "git clone https://github.com/${var.github_organization}/${var.git_repo_ui["${var.github_organization}"]}.git",
+      "sudo chmod 755 ${var.git_repo_ui["${var.github_organization}"]}/SearchUI_Web/*",
+      "cd ${var.git_repo_ui["${var.github_organization}"]}",
+      "terraform init",
+      "terraform apply -auto-approve",
+      "cd SearchUI_Web",
       "sudo chmod 755 /var/www/html/*",
-      "sudo cp index.html search.js style.css /var/www/html/",
+      "sudo cp -a * /var/www/html/",
       "sudo service apache2 restart",
       "echo Nasuni ElasticSearch Web portal: http://$(curl checkip.amazonaws.com)/index.html",
       "echo '@@@@@@@@@@@@@@@@@@@@@ FINISHED - Deployment of SearchUI Web Site @@@@@@@@@@@@@@@@@@@@@@@'"
@@ -154,8 +222,14 @@ resource "null_resource" "Inatall_APACHE" {
   depends_on = [null_resource.Inatall_Packages]
 }
 
+resource "null_resource" "cleanup_temp_files" {
+   provisioner "local-exec" {
+    command = "echo . > awacck.txt && echo . > awsecck.txt"
+  }
+   
+  depends_on = [null_resource.Inatall_APACHE]
+}
+
 output "Nasuni-SearchUI-Web-URL" {
   value = "http://${aws_instance.NACScheduler.public_ip}/index.html"
 }
-
-
