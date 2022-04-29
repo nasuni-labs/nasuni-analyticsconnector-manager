@@ -120,7 +120,7 @@ resource "null_resource" "update_secGrp" {
 
 resource "null_resource" "NACScheduler_IP" {
   provisioner "local-exec" {
-    command = "echo ${aws_instance.NACScheduler.public_ip} > NACScheduler_IP.txt"
+    command = var.use_private_ip != "Y" ? "echo ${aws_instance.NACScheduler.public_ip} > NACScheduler_IP.txt" : "echo ${aws_instance.NACScheduler.private_ip} > NACScheduler_IP.txt"
   }
   depends_on = [aws_instance.NACScheduler]
 }
