@@ -147,7 +147,7 @@ data "local_file" "aws_conf_secret_key" {
       "echo '@@@@@@@@@@@@@@@@@@@@@ STARTED - Inastall Packages @@@@@@@@@@@@@@@@@@@@@@@'",
       "sudo apt update",
       "sudo apt upgrade -y",
-      "sudo apt install dos2unix",
+      "sudo apt install dos2unix -y",
       "sudo apt install curl bash ca-certificates git openssl wget vim -y",
       "curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -",
       "sudo apt-add-repository \"deb [arch=$(dpkg --print-architecture)] https://apt.releases.hashicorp.com $(lsb_release -cs) main\"",
@@ -192,13 +192,18 @@ resource "null_resource" "Inatall_APACHE" {
       "sudo ufw app list",
       "sudo ufw allow 'Apache'",
       "sudo service apache2 restart",
+      "sudo apt install dos2unix -y",
       "echo '@@@@@@@@@@@@@@@@@@@@@ FINISHED - Inastall WEB Server             @@@@@@@@@@@@@@@@@@@@@@@'",
       "echo '@@@@@@@@@@@@@@@@@@@@@ STARTED  - Deployment of SearchUI Web Site @@@@@@@@@@@@@@@@@@@@@@@'",
       "git clone https://github.com/${var.github_organization}/${var.git_repo_ui}.git",
       "sudo chmod 755 ${var.git_repo_ui}/SearchUI_Web/*",
       "cd ${var.git_repo_ui}",
+	  "UI_TFVARS_FILE=ui_tfvars.tfvars",
+      "AWS_REGION=$(aws configure get region --profile ${var.aws_profile})",
+      "dos2unix create_aws_region_file.sh",
+      "sh create_aws_region_file.sh $AWS_REGION $UI_TFVARS_FILE",
       "terraform init",
-      "terraform apply -auto-approve",
+      "terraform apply -var-file=$UI_TFVARS_FILE -auto-approve",
       "cd SearchUI_Web",
       "sudo chmod 755 /var/www/html/*",
       "sudo cp -a * /var/www/html/",
@@ -220,7 +225,7 @@ resource "null_resource" "cleanup_temp_files" {
    provisioner "local-exec" {
     command = "echo . > awacck.txt && echo . > awsecck.txt"
   }
-    provisioner "local-exec" {
+   provisioner "local-exec" {
     when    = destroy
     command = "rm -rf *cck.txt"
   }
