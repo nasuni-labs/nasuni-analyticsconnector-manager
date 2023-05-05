@@ -42,13 +42,24 @@ variable "user_vpc_id" {
   default=""
 }
 
+variable "service_name" {
+  default=""
+}
+
 variable "user_subnet_id" {
   default=""
 }
 variable "subnet_availability_zone" {
   default=""
 }
-
 variable "use_private_ip" {
   default=""
+}
+variable "git_branch" {
+  default=""
+}
+
+variable "nac_es_securitygroup_id" {
+  type    = string
+  default = ""
 }

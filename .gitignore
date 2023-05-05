@@ -6,6 +6,7 @@ cmd
 .terraform
 *.txt
 *.lock.*
-?*.tfvars
+*.sh
+*.tfvars
 *.pem
 
