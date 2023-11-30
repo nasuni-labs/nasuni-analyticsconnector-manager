@@ -1,4 +1,8 @@
 
+##main
+locals{
+git_repo_ui = var.use_private_ip != "Y" ? "nasuni-opensearch-userinterface-public" : "nasuni-opensearch-userinterface" 
+}
 # instances
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -41,12 +45,13 @@ resource "aws_instance" "NACScheduler" {
   instance_type = "${var.instance_type}"
   key_name = "${var.aws_key}"
   associate_public_ip_address = var.use_private_ip != "Y" ? true : false
+  # associate_public_ip_address = true
   source_dest_check = false
   subnet_id = var.user_subnet_id != "" ? var.user_subnet_id : element(tolist(data.aws_subnet_ids.FetchingSubnetIDs.ids),0) 
   root_block_device {
     volume_size = var.volume_size
   }
-  vpc_security_group_ids = [ aws_security_group.NACSchedulerSecurityGroup.id ]
+  vpc_security_group_ids = [ var.nac_es_securitygroup_id ]
   tags = {
     Name            = var.nac_scheduler_name
     Application     = "Nasuni Analytics Connector with Elasticsearch"
@@ -58,56 +63,8 @@ resource "aws_instance" "NACScheduler" {
 
 depends_on = [
   data.local_file.aws_conf_access_key,
-  data.local_file.aws_conf_secret_key,
-  aws_security_group.NACSchedulerSecurityGroup
+  data.local_file.aws_conf_secret_key
 ]
-}
-
-resource "aws_security_group" "NACSchedulerSecurityGroup" {
-  name        = "nasuni-labs-SG-${var.nac_scheduler_name}-${random_id.unique_sg_id.dec}"
-  description = "Allow adinistrators to access HTTP and SSH service in instance"
-  vpc_id      = data.aws_vpc.VPCtoBeUsed.id
- # count = min(length(var.ingress_ports))
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
-  }
-
-    ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
-  }
-
-      ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
-  }
-  ingress {
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.VPCtoBeUsed.cidr_block]
-  }
-  egress {
-    from_port       = 0
-    to_port         = 0
-    protocol        = "-1"
-    cidr_blocks     = ["0.0.0.0/0"]
-  }
-   tags = {
-    Name            = "nasuni-labs-SG-${var.nac_scheduler_name}-${random_id.unique_sg_id.dec}"
-    Application     = "Nasuni Analytics Connector with Elasticsearch"
-    Developer       = "Nasuni"
-    PublicationType = "Nasuni Labs"
-    Version         = "V 0.1"
-
-  }
 }
 
 resource "null_resource" "update_secGrp" {
@@ -116,7 +73,6 @@ resource "null_resource" "update_secGrp" {
   }
   depends_on = [aws_instance.NACScheduler]
 }
-
 
 resource "null_resource" "NACScheduler_IP" {
   provisioner "local-exec" {
@@ -135,6 +91,7 @@ data "local_file" "aws_conf_access_key" {
   filename   = "${path.cwd}/awacck.txt"
   depends_on = [null_resource.aws_conf]
 }
+
 
 data "local_file" "aws_conf_secret_key" {
   filename   = "${path.cwd}/awsecck.txt"
@@ -155,11 +112,14 @@ data "local_file" "aws_conf_secret_key" {
       "sudo apt install terraform",
       "terraform -v",
       "which terraform",
+      "echo @@@@@@@@@@@ terraform Installed @@@@@@@@@",
       "sudo apt install jq -y",
       "sudo apt install zip -y",
       "sudo apt install unzip -y",
-      "sudo apt install python3 -y",
+      "sudo apt install python3.9 -y",
       "sudo apt install python3-pip -y",
+      "alias python3='/usr/bin/python3.9'",
+      "alias pip3='python3.9 -m pip'",
       "sudo pip3 install boto3",
       "curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip'",
       "sudo unzip awscliv2.zip",
@@ -175,15 +135,16 @@ data "local_file" "aws_conf_secret_key" {
   }
 
   connection {
-    type                = "ssh"
-    host                = var.use_private_ip != "Y" ? aws_instance.NACScheduler.public_ip : aws_instance.NACScheduler.private_ip
-    user                = "ubuntu"
-    private_key         = file("./${var.pem_key_file}")
+    type        = "ssh"
+    host = var.use_private_ip != "Y" ? aws_instance.NACScheduler.public_ip : aws_instance.NACScheduler.private_ip
+    user        = "ubuntu"
+    private_key = file("./${var.pem_key_file}")
   }
   depends_on = [null_resource.update_secGrp]
  }
 
 resource "null_resource" "Inatall_APACHE" {
+  #count = var.service_name == "KENDRA" ? 0 : 1
  provisioner "remote-exec" {
     inline = [
       "echo '@@@@@@@@@@@@@@@@@@@@@ STARTED - Inastall WEB Server            @@@@@@@@@@@@@@@@@@@@@@@'",
@@ -195,28 +156,14 @@ resource "null_resource" "Inatall_APACHE" {
       "sudo apt install dos2unix -y",
       "echo '@@@@@@@@@@@@@@@@@@@@@ FINISHED - Inastall WEB Server             @@@@@@@@@@@@@@@@@@@@@@@'",
       "echo '@@@@@@@@@@@@@@@@@@@@@ STARTED  - Deployment of SearchUI Web Site @@@@@@@@@@@@@@@@@@@@@@@'",
-      "git clone https://github.com/${var.github_organization}/${var.git_repo_ui}.git",
-      "sudo chmod 755 ${var.git_repo_ui}/SearchUI_Web/*",
-      "cd ${var.git_repo_ui}",
-	  "UI_TFVARS_FILE=ui_tfvars.tfvars",
-      "AWS_REGION=$(aws configure get region --profile ${var.aws_profile})",
-      "dos2unix create_aws_region_file.sh",
-      "sh create_aws_region_file.sh $AWS_REGION $UI_TFVARS_FILE",
-      "terraform init",
-      "terraform apply -var-file=$UI_TFVARS_FILE -auto-approve",
-      "cd SearchUI_Web",
-      "sudo chmod 755 /var/www/html/*",
-      "sudo cp -a * /var/www/html/",
-      "sudo service apache2 restart",
-      "echo Nasuni ElasticSearch Web portal: http://$(curl checkip.amazonaws.com)/index.html",
-      "echo '@@@@@@@@@@@@@@@@@@@@@ FINISHED - Deployment of SearchUI Web Site @@@@@@@@@@@@@@@@@@@@@@@'"
       ]
   }
   connection {
-    type                = "ssh"
-    host                = var.use_private_ip != "Y" ? aws_instance.NACScheduler.public_ip : aws_instance.NACScheduler.private_ip
-    user                = "ubuntu"
-    private_key         = file("./${var.pem_key_file}")
+    type        = "ssh"
+    # host        = aws_instance.NACScheduler.public_ip
+    host = var.use_private_ip != "Y" ? aws_instance.NACScheduler.public_ip : aws_instance.NACScheduler.private_ip
+    user        = "ubuntu"
+    private_key = file("./${var.pem_key_file}")
   }
   depends_on = [null_resource.Inatall_Packages]
 }
@@ -229,13 +176,12 @@ resource "null_resource" "cleanup_temp_files" {
     when    = destroy
     command = "rm -rf *cck.txt"
   }
-  depends_on = [null_resource.Inatall_APACHE]
+  #depends_on = [null_resource.Inatall_APACHE]
 }
 
 locals {
   NACScheduler-IP = var.use_private_ip != "Y" ? aws_instance.NACScheduler.public_ip : aws_instance.NACScheduler.private_ip
 }
 
-output "Nasuni-SearchUI-Web-URL" {
-  value = "http://${local.NACScheduler-IP}/index.html"
-}
+
+  
